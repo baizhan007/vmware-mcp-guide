@@ -195,7 +195,6 @@ vmware-mcp-guide/
 > GitHub 的 README 不支持直接内嵌 mp4，所以高清版给的是下载链接。
 > 想看在线播放版可以把 mp4 拖进 GitHub 的 Issue 输入框，它会生成一个可播放的 `user-attachments` 地址。
 
-想改文案或重做一版？见 [video/README.md](video/README.md)，改字符串常量后 `python make_video.py` 三分钟出片。
 
 ---
 
