@@ -2,10 +2,11 @@
 
 > 让 AI 直接操作你的虚拟机做实验、截页面、出报告。
 
+[![docs-check](https://github.com/baizhan007/vmware-mcp-guide/actions/workflows/docs-check.yml/badge.svg)](https://github.com/baizhan007/vmware-mcp-guide/actions/workflows/docs-check.yml)
 [![Platform](https://img.shields.io/badge/platform-Windows-blue)]()
 [![VMware](https://img.shields.io/badge/VMware%20Workstation-17.x-orange)]()
 [![Node](https://img.shields.io/badge/node-%3E%3D18-green)]()
-[![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
+[![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 ---
 
@@ -65,7 +66,7 @@ node --version
 ### 2. 复制配置
 
 ```powershell
-git clone https://github.com/<your-name>/vmware-mcp-guide.git
+git clone https://github.com/baizhan007/vmware-mcp-guide.git
 cd vmware-mcp-guide
 
 npm install
@@ -137,6 +138,8 @@ AI: 调用 list_vms
 ```
 vmware-mcp-guide/
 ├── README.md                    # 你在这里
+├── LICENSE
+├── package.json                 # npm install 依赖
 ├── docs/
 │   ├── 01-architecture.md       # 整体架构
 │   ├── 02-host-prep.md          # 宿主机准备
@@ -156,6 +159,10 @@ vmware-mcp-guide/
 │   ├── report_builder.py        # 报告生成器
 │   └── experiments/
 │       └── hive-import.sh       # 示例实验脚本
+├── scripts/
+│   └── check-links.mjs          # Markdown 相对链接检查
+├── .github/workflows/
+│   └── docs-check.yml           # CI：断链 / 语法 / 敏感文件检查
 └── assets/
     └── yarn-ui.png              # 效果截图
 ```
@@ -207,7 +214,16 @@ vmware-mcp-guide/
 
 ## 贡献
 
-欢迎提 Issue 分享你踩到的坑。如果这份教程帮你省了时间，给个 Star ⭐。
+欢迎提 [Issue](https://github.com/baizhan007/vmware-mcp-guide/issues) 分享你踩到的坑。如果这份教程帮你省了时间，给个 Star ⭐。
+
+提交前跑一下本地检查：
+
+```powershell
+npm install
+node scripts/check-links.mjs     # 检查 Markdown 相对链接
+```
+
+CI 会自动跑断链检查、脚本语法检查、敏感文件扫描（见 `.github/workflows/docs-check.yml`）。
 
 ## License
 

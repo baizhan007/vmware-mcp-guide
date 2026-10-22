@@ -4,6 +4,14 @@
   "private": true,
   "description": "Examples for connecting VMware Workstation VMs to MCP clients and generating lab reports",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/baizhan007/vmware-mcp-guide.git"
+  },
+  "homepage": "https://github.com/baizhan007/vmware-mcp-guide#readme",
+  "bugs": {
+    "url": "https://github.com/baizhan007/vmware-mcp-guide/issues"
+  },
   "scripts": {
     "start": "node examples/server.js",
     "test": "node examples/test-client.js examples/server.js"

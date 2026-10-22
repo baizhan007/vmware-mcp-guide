@@ -1,0 +1,97 @@
+name: docs-check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  markdown-links:
+    name: 检查 Markdown 相对链接
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 运行链接检查
+        run: node scripts/check-links.mjs
+
+  examples:
+    name: 检查示例代码语法
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 检查 JS 语法
+        run: |
+          node --check examples/server.js
+          node --check examples/test-client.js
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装 python-docx
+        run: pip install python-docx
+
+      - name: 检查 Python 语法
+        run: python -m py_compile examples/report_builder.py
+
+      - name: 检查 Shell 语法
+        run: bash -n examples/experiments/hive-import.sh
+
+  powershell:
+    name: 检查 PowerShell 语法
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 解析 lab.ps1 与 guest-sh.ps1
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in @('examples/lab.ps1', 'examples/guest-sh.ps1')) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file), [ref]$null, [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              Write-Host "::error file=$file::$($errors.Count) 处语法错误"
+              $errors | ForEach-Object { Write-Host "  L$($_.Extent.StartLineNumber): $($_.Message)" }
+              $failed = $true
+            } else {
+              Write-Host "$file OK"
+            }
+          }
+          if ($failed) { exit 1 }
+
+  secret-scan:
+    name: 检查是否误提交敏感文件
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 确认 config.json 与密钥未被提交
+        run: |
+          fail=0
+          if git ls-files | grep -qE '(^|/)config\.json$'; then
+            echo "::error::config.json 被提交了，它应该留在 .gitignore 里"
+            fail=1
+          fi
+          if git ls-files | grep -qiE '(^|/)id_(rsa|ed25519|ecdsa)$|\.pem$|\.ppk$'; then
+            echo "::error::发现私钥文件"
+            fail=1
+          fi
+          exit $fail
