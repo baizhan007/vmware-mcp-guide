@@ -162,11 +162,27 @@ vmware-mcp-guide/
 │       └── hive-import.sh       # 示例实验脚本
 ├── scripts/
 │   └── check-links.mjs          # Markdown 相对链接检查
+├── video/
+│   ├── make_video.py            # 宣传视频生成器（纯代码逐帧绘制）
+│   ├── vmware-mcp-guide-promo.mp4
+│   └── assets/                  # 视频用到的截图素材
 ├── .github/workflows/
 │   └── docs-check.yml           # CI：断链 / 语法 / 敏感文件检查
 └── assets/
     └── yarn-ui.png              # 效果截图
 ```
+
+---
+
+## 宣传视频
+
+30 秒，1920×1080。**没有一帧是录屏** —— 全部由 `video/make_video.py` 用 Python + Pillow 逐帧绘制。
+
+https://github.com/baizhan007/vmware-mcp-guide/raw/main/video/vmware-mcp-guide-promo.mp4
+
+[![宣传视频](assets/yarn-ui.png)](video/vmware-mcp-guide-promo.mp4)
+
+想改文案或重做一版？见 [video/README.md](video/README.md)，改字符串常量后 `python make_video.py` 三分钟出片。
 
 ---
 

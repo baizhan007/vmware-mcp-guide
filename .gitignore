@@ -28,3 +28,7 @@ venv/
 .dsh-office-*/
 *.tmp
 *.docx
+
+# 视频渲染中间产物（900 张 png 约 200 MB，不提交）
+video/frames/
+video/check/
