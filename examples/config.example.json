@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy this file to vmware-mcp/config.json and edit the values below.",
+  "_comment": "复制本文件为 config.json，然后把下面几项改成你自己的值。",
   "vmrunPath": "C:\\Program Files (x86)\\VMware\\VMware Workstation\\vmrun.exe",
   "hostType": "ws",
   "defaultVm": "centos",
@@ -10,6 +10,7 @@
   "guestUser": "root",
   "guestPassword": "CHANGE_ME",
   "vmPassword": "",
+  "mysqlPassword": "CHANGE_ME",
   "vmrunTimeoutMs": 120000,
   "startTimeoutMs": 600000,
   "encoding": "gbk"

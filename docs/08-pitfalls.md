@@ -266,6 +266,123 @@ run_command_in_guest { command: "echo A; echo B; echo C" }
 
 改用 SSH 脚本，或用 `&&` 并重定向到文件再 cat。
 
+### 坑 13：`vmrun start ... gui` 让脚本永久挂起
+
+**现象**
+
+PowerShell 脚本执行到「开机」这一步就卡住不动，几分钟都没输出，也不报错。
+
+```powershell
+& $Vmrun -T ws start $Vmx gui 2>&1 | Out-Null   # 卡死在这里
+Start-Sleep -Seconds 10
+```
+
+但虚拟机窗口确实弹出来了，系统也在正常启动。
+
+**原因**
+
+`gui` 模式下 `vmrun start` 会拉起 `vmware.exe`，然后**一直等待窗口进程**。
+PowerShell 的 `&` 调用运算符会跟着阻塞，直到 VMware 窗口关闭。
+
+**解决**
+
+用 `Start-Process` 不等待，再轮询虚拟机状态：
+
+```powershell
+$startMode = if ($env:LAB_START_GUI -eq "1") { "gui" } else { "nogui" }
+Start-Process -FilePath $Vmrun `
+    -ArgumentList @("-T", "ws", "start", $Vmx, $startMode) `
+    -WindowStyle Hidden | Out-Null
+
+# 轮询，最多等 5 分钟
+$up = $false
+for ($i = 0; $i -lt 60; $i++) {
+    Start-Sleep -Seconds 5
+    $list = & $Vmrun -T ws list 2>&1
+    if ($list -match [regex]::Escape($Vmx)) { $up = $true; break }
+}
+if (-not $up) { throw "虚拟机开机超时" }
+```
+
+> **建议默认用 `nogui`。** 服务器 / 自动化场景不需要窗口，
+> 需要看画面时临时 `$env:LAB_START_GUI=1`。
+
+### 坑 14：开机后立刻 SSH 会失败
+
+**现象**
+
+虚拟机刚启动，`vmrun list` 显示已在运行，但 SSH 报 `Connection refused`。
+
+**原因**
+
+`vmrun list` 只表示虚拟机**电源已开**，不代表 `sshd` 已起来。
+CentOS 7 从开机到 sshd 就绪大约要 15~40 秒。
+
+**解决**
+
+开机后轮询 SSH，直到真正可用：
+
+```powershell
+$sshReady = $false
+for ($i = 0; $i -lt 40; $i++) {
+    $probe = & $Ssh -i $KeyPath -o BatchMode=yes -o ConnectTimeout=3 `
+        "root@$ip" "echo ready" 2>&1
+    if ($probe -match "ready") { $sshReady = $true; break }
+    Start-Sleep -Seconds 3
+}
+```
+
+### 坑 15：`jps` 显示 `-- process information unavailable`
+
+**现象**
+
+以 root 执行 `jps`：
+
+```
+3729 -- process information unavailable
+3557 -- process information unavailable
+```
+
+**原因**
+
+Hadoop 进程是以 `hadoop` 用户启动的。**root 看不到其他用户的 JVM 详细信息**
+（`/tmp/hsperfdata_hadoop/` 目录权限限制）。
+
+**解决**
+
+用进程所属用户执行：
+
+```bash
+su - hadoop -c "jps"
+```
+
+> 这个坑很隐蔽：进程其实**正常运行**，只是 `jps` 显示不出来。
+> 如果据此判断「Hadoop 没启动」，会做很多无用功。
+
+### 坑 16：`jps` 只显示 `Jps` 自己
+
+**现象**
+
+```bash
+jps
+# 3355 Jps
+```
+
+**原因**
+
+**环境变量未加载**。SSH 非交互式 shell 不会读 `~/.bash_profile`，
+`JAVA_HOME`、`HADOOP_HOME` 都没设，`jps` 找不到 JVM。
+
+**解决**
+
+脚本里显式导出：
+
+```bash
+export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk
+export HADOOP_HOME=/home/hadoop/hadoop
+export PATH=$PATH:$JAVA_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
+```
+
 ---
 
 ## 8.5 快速排查表
@@ -279,6 +396,10 @@ run_command_in_guest { command: "echo A; echo B; echo C" }
 | 命令没输出 | 是否被 `grep` 过滤掉了、是否超时 |
 | 截图空白 | `--virtual-time-budget` 是否够、URL 是否通 |
 | 中文乱码 | `.vmx` 是 GBK、`vmrun` 输出是 UTF-8 |
+| **脚本卡在开机** | `vmrun start` 是否用了 `gui` → 改 `nogui` + `Start-Process` |
+| **开机后 SSH 拒绝** | sshd 还没起，需要轮询等待 |
+| **`jps` 显示 unavailable** | 用 `su - hadoop -c "jps"`，别用 root |
+| **`jps` 只有 Jps** | 环境变量没导出 |
 
 ---
 

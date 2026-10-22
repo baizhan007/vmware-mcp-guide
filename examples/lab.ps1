@@ -54,6 +54,14 @@ $VmAlias = if ($Cfg.defaultVm) { $Cfg.defaultVm } else { "centos" }
 $Vmrun = $Cfg.vmrunPath
 $Vmx = $Cfg.vms.$VmAlias
 
+# MySQL 密码来源（按优先级）：
+#   1. config.json 的 mysqlPassword 字段
+#   2. 环境变量 LAB_MYSQL_PWD
+#   3. 演示默认值 "123456"（仅用于跟着教程走一遍，实际使用请配到 config.json）
+$MySqlPwd = if ($Cfg.mysqlPassword) { $Cfg.mysqlPassword }
+            elseif ($env:LAB_MYSQL_PWD) { $env:LAB_MYSQL_PWD }
+            else { "123456" }
+
 # 隧道端口映射：本地端口 -> 客户机端口
 $TunnelMap = @{
     "yarn"    = @{ Local = 18088; Remote = 8088;  Url = "http://127.0.0.1:18088/cluster/apps";       Name = "YARN Application 列表" }
@@ -259,22 +267,24 @@ function Show-Status {
     $ip = Get-GuestIp
     Write-Ok "$VmAlias 运行中，IP $ip"
 
-    $out = Invoke-Guest @'
+    $statusScript = @'
 export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk
 echo "###PROC###"
-jps 2>/dev/null | grep -v Jps
+# 必须以 hadoop 用户跑 jps，否则 root 看到的是 "process information unavailable"
+su - hadoop -c "jps" 2>/dev/null | grep -v Jps
 echo "###SVC###"
 echo "mariadb=$(systemctl is-active mariadb 2>/dev/null)"
 echo "###VER###"
 java -version 2>&1 | head -1
 su - hadoop -c "hadoop version" 2>/dev/null | head -1
 echo "hive=$(ls -d /home/hadoop/apache-hive-3.1.3-bin 2>/dev/null)"
-echo "mysql=$(mysql -uroot -p123456 -N -e 'select version();' 2>/dev/null)"
+echo "mysql=$(mysql -uroot -p__MYSQL_PWD__ -N -e 'select version();' 2>/dev/null)"
 echo "###TABLES###"
-mysql -uroot -p123456 -N -e "select count(*) from information_schema.tables where table_schema='hive_metastore';" 2>/dev/null
+mysql -uroot -p__MYSQL_PWD__ -N -e "select count(*) from information_schema.tables where table_schema='hive_metastore';" 2>/dev/null
 echo "###HIVETBLS###"
-mysql -uroot -p123456 -N -e "select TBL_NAME from hive_metastore.TBLS;" 2>/dev/null
+mysql -uroot -p__MYSQL_PWD__ -N -e "select TBL_NAME from hive_metastore.TBLS;" 2>/dev/null
 '@
+    $out = Invoke-Guest ($statusScript.Replace("__MYSQL_PWD__", $MySqlPwd))
 
     $sec = ""; $proc = @(); $svc = ""; $ver = @(); $mt = ""; $ht = @()
     foreach ($line in ($out -split "`r?`n")) {
@@ -316,8 +326,33 @@ function Start-Lab {
     $state = Get-VmState
     if ($state -ne "running") {
         Write-Step "虚拟机未运行，正在开机..."
-        & $Vmrun -T ws start $Vmx gui 2>&1 | Out-Null
-        Start-Sleep -Seconds 10
+        # 关键：不要用 & $Vmrun ... gui
+        # gui 模式下 vmrun 会拉起 vmware.exe 并一直等待，PowerShell 的 & 会跟着阻塞。
+        # 用 Start-Process 不等待，再轮询状态。
+        $startMode = if ($env:LAB_START_GUI -eq "1") { "gui" } else { "nogui" }
+        Start-Process -FilePath $Vmrun `
+            -ArgumentList @("-T", "ws", "start", $Vmx, $startMode) `
+            -WindowStyle Hidden | Out-Null
+
+        $up = $false
+        for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 5
+            $list = & $Vmrun -T ws list 2>&1
+            if ($list -match [regex]::Escape($Vmx)) { $up = $true; break }
+        }
+        if (-not $up) { throw "虚拟机开机超时（5 分钟），检查 VMware 窗口是否有报错" }
+        Write-Ok "虚拟机已开机，等待 sshd 就绪..."
+
+        # 等 SSH 真正可用，否则后续脚本会连不上
+        $sshReady = $false
+        for ($i = 0; $i -lt 40; $i++) {
+            $probe = & $Ssh -i $KeyPath -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL `
+                -o BatchMode=yes -o ConnectTimeout=3 -o LogLevel=ERROR `
+                "root@$(Get-GuestIp)" "echo ready" 2>&1
+            if ($probe -match "ready") { $sshReady = $true; break }
+            Start-Sleep -Seconds 3
+        }
+        if ($sshReady) { Write-Ok "SSH 已就绪" } else { Write-Warn2 "SSH 尚未就绪，后续步骤可能失败" }
     }
     $out = Invoke-Guest @'
 export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk
@@ -390,7 +425,7 @@ function Invoke-MySql([string]$Sql) {
     if (-not $Sql) { throw '缺少 SQL。用法: .\lab.ps1 sql "show databases;"' }
     $esc = $Sql -replace '"', '\"'
     $out = Invoke-Guest @"
-mysql -uroot -p123456 -e "$esc" 2>&1 | grep -v 'Using a password'
+mysql -uroot -p$MySqlPwd -e "$esc" 2>&1 | grep -v 'Using a password'
 "@ -TimeoutSec 120
     Write-Host $out
 }
