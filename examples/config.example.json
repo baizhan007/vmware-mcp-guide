@@ -1,0 +1,16 @@
+{
+  "_comment": "Copy this file to vmware-mcp/config.json and edit the values below.",
+  "vmrunPath": "C:\\Program Files (x86)\\VMware\\VMware Workstation\\vmrun.exe",
+  "hostType": "ws",
+  "defaultVm": "centos",
+  "vms": {
+    "centos": "D:\\VMs\\CentOS 7 64 位.vmx"
+  },
+  "scanRoots": ["D:\\VMs"],
+  "guestUser": "root",
+  "guestPassword": "CHANGE_ME",
+  "vmPassword": "",
+  "vmrunTimeoutMs": 120000,
+  "startTimeoutMs": 600000,
+  "encoding": "gbk"
+}

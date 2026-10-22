@@ -1,0 +1,30 @@
+# 忽略本机配置（真实路径和密码）
+config.json
+examples/config.json
+.tunnel.pid
+shots/
+
+# 依赖
+node_modules/
+package-lock.json
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 临时文件
+.dsh-office-*/
+*.tmp
+*.docx

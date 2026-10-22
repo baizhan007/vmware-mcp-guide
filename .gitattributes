@@ -1,0 +1,22 @@
+# 统一换行符，避免跨平台协作时整文件 diff
+* text=auto
+
+# Shell 脚本必须 LF（否则 Linux 上跑不了）
+*.sh text eol=lf
+
+# PowerShell 用 CRLF（Windows 原生）
+*.ps1 text eol=crlf
+
+# Python / JS / Markdown 用 LF
+*.py text eol=lf
+*.js text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.docx binary
+*.pdf binary
