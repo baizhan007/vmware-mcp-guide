@@ -178,6 +178,8 @@ vmware-mcp-guide/
 
 30 秒，1920×1080。**没有一帧是录屏** —— 全部由 `video/make_video.py` 用 Python + Pillow 逐帧绘制。
 
+![宣传视频预览](assets/promo-preview.gif)
+
 | 分镜 | 内容 |
 |:---|:---|
 | 0:00 – 0:05 | 痛点：一份实验报告 4~6 小时，70% 是重复劳动 |
@@ -186,9 +188,11 @@ vmware-mcp-guide/
 | 0:17 – 0:23 | 产出：自动生成的报告 + 自动截取的页面 |
 | 0:23 – 0:30 | 收尾：仓库地址 |
 
+上面是 GIF 预览（640×360，1.3 MB）。**高清原片**（1080p / 完整动效）在这里：
+
 ▶ **[下载观看（1.25 MB）](https://github.com/baizhan007/vmware-mcp-guide/raw/main/video/vmware-mcp-guide-promo.mp4)**
 
-> GitHub 的 README 不支持直接内嵌 mp4，所以这里给的是下载链接。
+> GitHub 的 README 不支持直接内嵌 mp4，所以高清版给的是下载链接。
 > 想看在线播放版可以把 mp4 拖进 GitHub 的 Issue 输入框，它会生成一个可播放的 `user-attachments` 地址。
 
 想改文案或重做一版？见 [video/README.md](video/README.md)，改字符串常量后 `python make_video.py` 三分钟出片。
