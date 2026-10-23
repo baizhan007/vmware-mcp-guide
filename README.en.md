@@ -57,6 +57,8 @@ node scripts/smoke.mjs
 
 `smoke: ok` means the server itself is healthy. Register it with your MCP client:
 
+> `npm run doctor` / `npm run smoke` / `npm run check` work too, and none of them need `npm install`.
+
 ```yaml
 # DSH: %USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml
 - insert:

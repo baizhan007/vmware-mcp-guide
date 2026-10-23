@@ -57,6 +57,8 @@ node scripts/smoke.mjs
 
 看到 `smoke: ok` 就说明服务器本身没问题。接着把它注册进你的 MCP 客户端：
 
+> 也可以用 `npm run doctor` / `npm run smoke` / `npm run check`，同样**不需要 `npm install`**。
+
 ```yaml
 # DSH: %USERPROFILE%\.dsh\profiles\desktop\cordis.patch.yml
 - insert:
