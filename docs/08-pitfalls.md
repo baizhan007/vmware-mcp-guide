@@ -383,14 +383,56 @@ export HADOOP_HOME=/home/hadoop/hadoop
 export PATH=$PATH:$JAVA_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
 ```
 
+### 坑 17：`.ps1` 直接双击或运行报「禁止运行脚本」
+
+**现象**
+
+```
+无法加载文件 ...\lab.ps1，因为在此系统上禁止运行脚本。
+```
+
+**原因**
+
+Windows 客户端默认执行策略是 `Restricted`，未签名的脚本一律拒绝。
+
+**解决**
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned   # 只影响当前用户，不需要管理员
+```
+
+`node scripts/doctor.mjs` 会检查这一项。
+
+### 坑 18：脚本里的中文变成 `鐣欑┖` 并语法报错
+
+**现象**
+
+```
+Unexpected token 'config.json"
+```
+
+同时报错行里夹杂乱码，看起来像是文件损坏。
+
+**原因**
+
+脚本是 **UTF-8 无 BOM**，Windows PowerShell 5.1 按 GBK 解码，
+中文字符被拆成非法字节，引号配对被破坏。
+
+**解决**
+
+- 用 **PowerShell 7（`pwsh`）** 运行，它默认 UTF-8；
+- 或者用编辑器把文件另存为 **UTF-8 with BOM**（仓库里的 `.ps1` 已带 BOM，
+  别用会去掉 BOM 的工具保存）。
+
 ---
 
 ## 8.5 快速排查表
 
 | 症状 | 先查什么 |
 |:---|:---|
-| 客户端看不到工具 | 路径是否绝对、是否 `npm install` |
+| 客户端看不到工具 | 路径是否绝对、server 能否用 `node scripts/smoke.mjs` 通过 |
 | 工具调不通 | `config.json` 的 `encoding` 是否 `gbk` |
+| 报 `require is not defined in ES module scope` | `package.json` 里不该有 `"type": "module"` |
 | SSH 连不上 | 密钥是否用 cmd 生成、`authorized_keys` 权限是否 600 |
 | 虚拟机没 IP | `systemctl status vmtoolsd`、网络模式 |
 | 命令没输出 | 是否被 `grep` 过滤掉了、是否超时 |
@@ -400,6 +442,9 @@ export PATH=$PATH:$JAVA_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
 | **开机后 SSH 拒绝** | sshd 还没起，需要轮询等待 |
 | **`jps` 显示 unavailable** | 用 `su - hadoop -c "jps"`，别用 root |
 | **`jps` 只有 Jps** | 环境变量没导出 |
+
+> 上面这些症状里，前四条可以用一条命令筛掉：
+> `node scripts/doctor.mjs`（环境）+ `node scripts/smoke.mjs`（服务器本身）。
 
 ---
 

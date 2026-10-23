@@ -4,38 +4,57 @@
 
 ---
 
-> **只想最快跑起来？只需要四样东西。**
+> **只想最快跑起来？三步，不需要 `npm install`。**
 
-## 四件套
+## 三步
 
-### ① config.json — 填三个值
+### ① 复制配置，改几个值
+
+```powershell
+cd vmware-mcp-guide
+copy examples\config.example.json examples\config.json
+```
+
+打开 `examples\config.json`，只需要改这三处：
 
 ```json
 {
-  "vmrunPath": "你的 vmrun.exe 路径",
-  "vms": {
-    "centos": "你的 .vmx 路径"
-  },
+  "vmrunPath": "",
+  "defaultVm": "centos",
+  "vms": { "centos": "D:\\VMs\\CentOS 7 64 位.vmx" },
   "guestUser": "root",
-  "guestPassword": "你的密码"
+  "guestPassword": "你的密码",
+  "sshKeyPath": "C:\\Users\\你\\.ssh\\id_ed25519"
 }
 ```
 
-完整模板见 [`examples/config.example.json`](../examples/config.example.json)（复制成 `config.json` 后修改）。
+- `vmrunPath` **留空即可**，会自动探测（注册表 → Program Files → PATH）。
+- `vms` 填你的 `.vmx` 绝对路径，别名随便取。
+- `guestPassword` / `sshKeyPath` 只在用 Tools 通道和 SSH 时才需要。
 
-### ② server.js — 25 个工具
+### ② 自检
 
-核心是 `vmrun` 包装 + 工具注册。完整实现见 [`examples/server.js`](../examples/server.js)。
+```powershell
+node scripts/doctor.mjs
+```
 
-最少需要这三个工具就能开始：
+逐项告诉你哪里没通：Node、vmrun、config、虚拟机状态、IP、SSH 密钥。
+带 `✗` 的必须修，`!` 只是提醒。
 
-- `list_vms` — 确认能连上
-- `start_vm` — 开机
-- `vm_status` — 查状态
+### ③ 验证服务器能启动
 
-### ③ 注册配置 — 一段 YAML/JSON
+```powershell
+node scripts/smoke.mjs
+```
 
-DSH：
+它会真的把 server 拉起来，走一遍 `initialize` → `tools/list`，并校验 25 个工具的 schema。
+看到 `smoke: ok` 就说明服务器本身没问题。
+
+---
+
+## 接入客户端
+
+只差一段配置。DSH：
 
 ```yaml
 - insert:
@@ -44,40 +63,22 @@ DSH：
       config:
         serverName: vmware
         transport: stdio
-        command: "D:\\nodejs\\node.exe"
-        args: ["D:\\path\\to\\server.js"]
-        cwd: "D:\\path\\to\\vmware-mcp"
+        command: "C:\\Program Files\\nodejs\\node.exe"
+        args: ["D:\\work\\vmware-mcp-guide\\examples\\server.js"]
+        cwd: "D:\\work\\vmware-mcp-guide\\examples"
 ```
 
-其他客户端见 [第五章](05-register.md)。
+其他客户端（Claude Desktop / Cline / Cursor）见 [第五章](05-register.md)。
 
-### ④ SSH 密钥 — 一条命令 + 粘贴
+注册后让 AI 调 `list_vms`：
 
-```powershell
-cmd.exe /c 'ssh-keygen.exe -t ed25519 -f "%USERPROFILE%\.ssh\vmware_centos" -N "" -C dsh-vmware-mcp'
 ```
+AI: 调用 list_vms
 
-把 `%USERPROFILE%\.ssh\vmware_centos.pub` 的内容追加到虚拟机 `/root/.ssh/authorized_keys`。
-
----
-
-## 验证四步
-
-```powershell
-# ① vmrun 可用
-& "C:\...\vmrun.exe" -T ws list
-
-# ② 能拿 IP
-& "C:\...\vmrun.exe" -T ws getGuestIPAddress "D:\VMs\xxx.vmx"
-
-# ③ SSH 免密
-ssh -i "$env:USERPROFILE\.ssh\vmware_centos" -o BatchMode=yes root@192.168.7.128 "hostname"
-
-# ④ MCP 能调
-node test-client.js server.js '[{"name":"list_vms","arguments":{}}]'
+→ running VMs: 1
+  CentOS 7 64 位  (D:\VMs\CentOS 7 64 位.vmx)
+  aliases: centos -> D:\VMs\CentOS 7 64 位.vmx
 ```
-
-四条全过 → 可以用了。
 
 ---
 
@@ -87,8 +88,8 @@ node test-client.js server.js '[{"name":"list_vms","arguments":{}}]'
 
 | 阶段 | 做什么 | 能干什么 | 耗时 |
 |:---|:---|:---|:---:|
-| **L1 最小** | 四件套 | AI 能开关虚拟机、跑单条命令 | 30 分钟 |
-| **L2 顺手** | + `guest-sh.ps1` | 能跑多行脚本、拿完整输出 | +15 分钟 |
+| **L1 最小** | config + 注册 MCP | AI 能开关虚拟机、跑单条命令 | 10 分钟 |
+| **L2 顺手** | + SSH 免密 + `guest-sh.ps1` | 能跑多行脚本、拿完整输出 | +15 分钟 |
 | **L3 高效** | + `lab.ps1` | 一键启停、状态总览、查询封装 | +30 分钟 |
 | **L4 完整** | + 隧道 + 截图 + `report_builder.py` | 自动出带图报告 | +1 小时 |
 
@@ -142,12 +143,20 @@ AI: 调用 take_snapshot {"vm":"centos","name":"before-change"}
 
 | 文件 | 说明 |
 |:---|:---|
-| `config.json` | MCP 配置模板 |
-| `server.js` | MCP 服务器完整实现（25 工具） |
+| `config.example.json` | 配置模板（复制成 `config.json`） |
+| `server.js` | MCP 服务器完整实现（25 工具，零依赖） |
 | `guest-sh.ps1` | SSH 脚本执行封装 |
 | `lab.ps1` | 日常操作总入口 |
 | `report_builder.py` | 报告生成器（7 种内容块） |
 | `experiments/hive-import.sh` | 示例实验脚本 |
+
+配套脚本：
+
+| 文件 | 说明 |
+|:---|:---|
+| `scripts/doctor.mjs` | 环境自检 |
+| `scripts/smoke.mjs` | 真实握手测试（CI 也跑这个） |
+| `scripts/check-links.mjs` | 文档断链检查 |
 
 ---
 

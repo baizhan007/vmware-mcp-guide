@@ -1,4 +1,4 @@
-# Run a command inside a guest over SSH, using the key configured for this VM.
+﻿# Run a command inside a guest over SSH, using the key configured for this VM.
 #
 # This is the fastest channel for scripted work: no VMware Tools dependency, no
 # console window, and it works from any shell. Prefer it over console keystroke
@@ -12,8 +12,8 @@
 param(
     [Parameter(Position = 0)][string]$Command = "true",
     [string]$Vm = "",
-    [string]$User = "root",
-    [string]$KeyPath = "$env:USERPROFILE\.ssh\vmware_centos",
+    [string]$User = "",
+    [string]$KeyPath = "",
     [string]$Script = "",
     [int]$TimeoutSec = 60
 )
@@ -23,25 +23,43 @@ $ErrorActionPreference = "Stop"
 # $PSScriptRoot is reliable at script scope but not inside functions, so capture it.
 $ScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 
+# One config.json next to this script drives every path: VM aliases, credentials,
+# SSH key. Nothing is hard-coded to one machine.
+$CfgPath = Join-Path $ScriptRoot "config.json"
+$Cfg = $null
+if (Test-Path $CfgPath) {
+    $Cfg = Get-Content $CfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+}
+
+$User = if ($User) { $User } elseif ($Cfg -and $Cfg.guestUser) { $Cfg.guestUser } else { "root" }
+$KeyPath = if ($KeyPath) { $KeyPath }
+           elseif ($Cfg -and $Cfg.sshKeyPath) { $Cfg.sshKeyPath }
+           else { "$env:USERPROFILE\.ssh\id_ed25519" }
+
 # Resolve a config.json alias (e.g. "centos") to the guest's current IP, so
 # callers can use the same alias the MCP tools use instead of hard-coding an
 # address that changes when DHCP reassigns it.
 function Resolve-GuestAddress([string]$Name) {
-    $cfgPath = Join-Path $ScriptRoot "config.json"
-    if (-not (Test-Path $cfgPath)) { return $Name }
+    if (-not $Cfg) { return $Name }
 
-    $cfg = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $alias = if ($Name) { $Name } else { $cfg.defaultVm }
+    $alias = if ($Name) { $Name } else { $Cfg.defaultVm }
     if (-not $alias) { return $Name }
 
     # Already an address or hostname? Use it as-is.
     if ($alias -match '^\d{1,3}(\.\d{1,3}){3}$' -or $alias -match '\.[a-zA-Z]{2,}$') { return $alias }
 
-    $vmx = $cfg.vms.$alias
-    if (-not $vmx) { throw "unknown VM alias '$alias'; config.json knows: $(($cfg.vms.PSObject.Properties.Name) -join ', ')" }
+    $vmx = $Cfg.vms.$alias
+    if (-not $vmx) { throw "unknown VM alias '$alias'; config.json knows: $(($Cfg.vms.PSObject.Properties.Name) -join ', ')" }
 
-    $vmrun = $cfg.vmrunPath
-    if (-not (Test-Path $vmrun)) { throw "vmrun not found: $vmrun" }
+    $vmrun = $Cfg.vmrunPath
+    if (-not $vmrun -or -not (Test-Path $vmrun)) {
+        $candidates = @(
+            "C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe",
+            "C:\Program Files\VMware\VMware Workstation\vmrun.exe"
+        )
+        $vmrun = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+    if (-not $vmrun -or -not (Test-Path $vmrun)) { throw "vmrun not found; set vmrunPath in config.json" }
     $ip = & $vmrun -T ws getGuestIPAddress $vmx 2>&1
     if ($LASTEXITCODE -ne 0 -or -not $ip) { throw "cannot get IP for '$alias' (is the VM running with Tools up?): $ip" }
     return ($ip | Select-Object -Last 1).ToString().Trim()

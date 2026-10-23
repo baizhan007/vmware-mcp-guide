@@ -4,6 +4,9 @@
 
 ---
 
+> 下面的路径统一写成 `<repo>`，代表你 clone 下来的仓库根目录，例如 `D:\work\vmware-mcp-guide`。
+> 服务器入口是 **`<repo>\examples\server.js`**。本仓库只支持 **Windows 上的 VMware Workstation**。
+
 ## 5.1 DeepSeek Harness（DSH）
 
 配置文件在：
@@ -21,10 +24,10 @@
       config:
         serverName: vmware
         transport: stdio
-        command: "D:\\nodejs\\node.exe"
+        command: "C:\\Program Files\\nodejs\\node.exe"
         args:
-          - "D:\\path\\to\\vmware-mcp\\server.js"
-        cwd: "D:\\path\\to\\vmware-mcp"
+          - "<repo>\\examples\\server.js"
+        cwd: "<repo>"
         failOnStartupError: true
         toolCallTimeoutMs: 120000
 ```
@@ -62,15 +65,14 @@ AI: 调用 list_vms
 | 系统 | 路径 |
 |:---|:---|
 | Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
-| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 
 ```json
 {
   "mcpServers": {
     "vmware": {
-      "command": "D:\\nodejs\\node.exe",
-      "args": ["D:\\path\\to\\vmware-mcp\\server.js"],
-      "cwd": "D:\\path\\to\\vmware-mcp"
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": ["<repo>\\examples\\server.js"],
+      "cwd": "<repo>"
     }
   }
 }
@@ -85,8 +87,8 @@ AI: 调用 list_vms
 ```json
 {
   "vmware": {
-    "command": "D:\\nodejs\\node.exe",
-    "args": ["D:\\path\\to\\vmware-mcp\\server.js"],
+    "command": "C:\\Program Files\\nodejs\\node.exe",
+    "args": ["<repo>\\examples\\server.js"],
     "disabled": false,
     "autoApprove": ["list_vms", "vm_status", "get_guest_ip"]
   }
@@ -103,8 +105,8 @@ AI: 调用 list_vms
 {
   "mcpServers": {
     "vmware": {
-      "command": "D:\\nodejs\\node.exe",
-      "args": ["D:\\path\\to\\vmware-mcp\\server.js"]
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": ["<repo>\\examples\\server.js"]
     }
   }
 }
@@ -112,23 +114,35 @@ AI: 调用 list_vms
 
 ## 5.5 通用调试方法
 
-不管哪个客户端，出问题都可以用这个脚本单独测：
+不管哪个客户端，出问题都按这个顺序排查：
 
 ```powershell
-node test-client.js server.js '[{"name":"list_vms","arguments":{}}]'
+# ① 环境有没有问题
+node scripts/doctor.mjs
+
+# ② 服务器本身能不能启动、工具在不在
+node scripts/smoke.mjs
+
+# ③ 具体工具能不能调
+node examples/test-client.js examples/server.js '[{"name":"list_vms","arguments":{}}]'
 ```
 
-如果能通，说明 server.js 没问题，是客户端配置的问题。
+三条都过 → server.js 没问题，是客户端配置的问题。
+第 ② 条过不了 → 直接看它打印的 stderr，不用怀疑客户端。
 
 ### 常见启动失败原因
 
 | 现象 | 原因 | 解决 |
 |:---|:---|:---|
 | 客户端看不到工具 | 路径写错 | 用绝对路径，别用 `~` 或环境变量 |
-| 报 `Cannot find module` | 没 `npm install` | 在 vmware-mcp 目录执行 |
-| 报 `config.json not found` | 缺配置文件 | 复制 `examples/config.example.json` 为 `config.json` |
+| 报 `Cannot find module` | 用了旧版说明，去 `npm install` 了 | 本仓库零依赖，删掉 `node_modules` 也能跑 |
+| 报 `require is not defined in ES module scope` | 仓库里混进了 `"type": "module"` | 删掉 `package.json` 里的这一行 |
 | 工具调不通 | cwd 不对 | 显式设置 `cwd` |
 | 中文路径报错 | 编码问题 | `config.json` 里 `encoding: "gbk"` |
+| 启动后立刻退出 | 用 `node` 手工启动，而它等 stdin | 正常现象：终端里运行会打印帮助并退出，交给客户端启动即可 |
+
+> 想看协议原文：`npx @modelcontextprotocol/inspector node examples/server.js`，
+> 在网页里点 `tools/list` / `tools/call`，能直接看到 JSON-RPC 报文。
 
 ---
 

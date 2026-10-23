@@ -19,9 +19,15 @@ Total running VMs: 1
 D:\VMs\CentOS 7 64 位.vmx
 ```
 
-> **记下这个 vmrun.exe 的完整路径**，后面 `config.json` 要填。
-
-如果提示找不到，用 Everything 之类的工具搜一下 `vmrun.exe`。有些人装在 `D:\` 或其他分区。
+> **不知道装在哪？不用找。** `server.js` 和 `doctor.mjs` 会按这个顺序自动探测：
+> 安装注册表 `HKLM\SOFTWARE\WOW6432Node\VMware, Inc.\VMware Workstation\InstallPath`
+> → `Program Files` 两个常见目录 → `PATH`。
+>
+> ```powershell
+> node scripts/doctor.mjs    # 会直接打印探测到的 vmrun 路径
+> ```
+>
+> 只有装在非常规位置且注册表里没有记录时，才需要手动填 `config.json` 的 `vmrunPath`。
 
 ## 2.2 安装 Node.js
 
@@ -38,7 +44,37 @@ where.exe node
 > **建议记下 node.exe 的绝对路径**。如果你同时装了多个 Node 版本（nvm、volta），
 > MCP 配置里写绝对路径能避免版本漂移。
 
-## 2.3 准备虚拟机
+## 2.3 PowerShell 的两个门槛
+
+`.ps1` 脚本（`lab.ps1` / `guest-sh.ps1`）在 Windows 上有两个常见拦路虎，
+一次配好，后面就不用管：
+
+### ① 执行策略
+
+默认策略会拒绝运行未签名的脚本：
+
+```
+无法加载文件 ...lab.ps1，因为在此系统上禁止运行脚本。
+```
+
+修法（只影响当前用户，不需要管理员）：
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+`node scripts/doctor.mjs` 会检查这一项。
+
+### ② 编码
+
+脚本里含中文注释，文件是 **UTF-8 with BOM**。
+Windows PowerShell 5.1 读不带 BOM 的 UTF-8 会乱码（`鐣欑┖` 这种），
+脚本直接语法报错。仓库里的 `.ps1` 都带了 BOM，**不要用会去掉 BOM 的编辑器保存**。
+
+> 用 **PowerShell 7（`pwsh`）** 就没有这个问题，它默认按 UTF-8 读取。
+> 两个版本都支持，随你用哪个。
+
+## 2.4 准备虚拟机
 
 本教程用 **CentOS 7.9 最小化安装** 演示。关键配置建议：
 
@@ -73,7 +109,7 @@ setenforce 0
 sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
 ```
 
-## 2.4 虚拟机网络模式选择
+## 2.5 虚拟机网络模式选择
 
 | 模式 | 宿主机能否访问 | 虚拟机能否上网 | 推荐场景 |
 |:---|:---:|:---:|:---|
@@ -93,9 +129,19 @@ ss -lnt | grep :22
 
 CentOS 7 最小化安装默认就有 sshd，不用额外装。
 
-## 2.5 检查清单
+## 2.6 检查清单
 
 动手之前，确认这几条都通过：
+
+```powershell
+# 一条命令代替下面所有手工检查
+node scripts/doctor.mjs
+```
+
+它会逐项报告：Node 版本、vmrun 路径、config.json、虚拟机别名、电源状态、客户机 IP、SSH 密钥。
+输出里带 `✗` 的才是阻塞项，`!` 只是建议。
+
+手工检查的话：
 
 ```powershell
 # ① vmrun 可用
@@ -104,13 +150,10 @@ CentOS 7 最小化安装默认就有 sshd，不用额外装。
 # ② Node 可用
 node --version
 
-# ③ 虚拟机在跑
-& "C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe" -T ws list
-
-# ④ 能拿到 IP
+# ③ 能拿到 IP
 & "C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe" -T ws getGuestIPAddress "D:\VMs\CentOS 7 64 位.vmx"
 
-# ⑤ 能 ping 通（NAT 模式可能不通，用 SSH 测试更准）
+# ④ 能连 22 端口（NAT 模式下 ping 可能不通，用端口测试更准）
 Test-NetConnection -ComputerName 192.168.7.128 -Port 22
 ```
 

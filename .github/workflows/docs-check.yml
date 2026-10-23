@@ -21,6 +21,21 @@ jobs:
       - name: 运行链接检查
         run: node scripts/check-links.mjs
 
+  handshake:
+    name: 真实握手（initialize + tools/list）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # 零依赖：不跑 npm install，直接验证 clone 下来就能启动。
+      # 语法检查（node --check）抓不到 require/ESM 冲突这类"启动即崩"的问题。
+      - name: 启动服务器并校验工具
+        run: node scripts/smoke.mjs
+
   examples:
     name: 检查示例代码语法
     runs-on: ubuntu-latest
@@ -31,13 +46,12 @@ jobs:
         with:
           node-version: "20"
 
-      - name: 安装依赖
-        run: npm install --no-audit --no-fund
-
       - name: 检查 JS 语法
         run: |
           node --check examples/server.js
           node --check examples/test-client.js
+          node --check scripts/doctor.mjs
+          node --check scripts/smoke.mjs
 
       - uses: actions/setup-python@v5
         with:

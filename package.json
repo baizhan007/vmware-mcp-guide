@@ -1,9 +1,8 @@
 {
   "name": "vmware-mcp-guide",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Examples for connecting VMware Workstation VMs to MCP clients and generating lab reports",
-  "type": "module",
+  "description": "Tutorial + zero-dependency MCP server that lets an AI agent drive VMware Workstation VMs on Windows",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/baizhan007/vmware-mcp-guide.git"
@@ -14,13 +13,17 @@
   },
   "scripts": {
     "start": "node examples/server.js",
-    "test": "node examples/test-client.js examples/server.js"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "smoke": "node scripts/smoke.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "links": "node scripts/check-links.mjs",
+    "test": "node scripts/smoke.mjs",
+    "check": "node scripts/check-links.mjs && node scripts/smoke.mjs"
   },
   "engines": {
     "node": ">=18"
   },
+  "os": [
+    "win32"
+  ],
   "license": "MIT"
 }

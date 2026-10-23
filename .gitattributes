@@ -10,6 +10,7 @@
 # Python / JS / Markdown 用 LF
 *.py text eol=lf
 *.js text eol=lf
+*.mjs text eol=lf
 *.md text eol=lf
 *.json text eol=lf
 *.yml text eol=lf
@@ -18,5 +19,7 @@
 # 二进制
 *.png binary
 *.jpg binary
+*.gif binary
+*.mp4 binary
 *.docx binary
 *.pdf binary

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     CentOS 大数据实验虚拟机工具箱 — 环境启停 / SSH 隧道 / Web UI 截图 / Hive 查询
 
@@ -22,17 +22,28 @@ param(
 $ErrorActionPreference = "Stop"
 
 # ---------------- 路径与配置 ----------------
-# 约定：lab.ps1 所在目录与 vmware-mcp 目录同级，例如
-#   D:\mywork\lab\lab.ps1          <- 本脚本
-#   D:\mywork\vmware-mcp\          <- MCP 服务器目录
-#   D:\mywork\shots\               <- 截图输出
-# 如果结构不同，改下面两行即可。
+# 支持两种布局，自动探测，不用改脚本：
+#   A. 仓库自带布局：examples\lab.ps1 + examples\config.json + examples\server.js
+#   B. 自建布局：      D:\mywork\lab\lab.ps1 + D:\mywork\vmware-mcp\config.json
+# 截图输出统一放到仓库（或工作区）根目录的 shots\。
 $LabRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $Workspace = Split-Path $LabRoot -Parent
-$McpDir = Join-Path $Workspace "vmware-mcp"
+
+$McpDir = $null
+foreach ($candidate in @(
+    $LabRoot,                                  # A：配置就在本目录
+    (Join-Path $Workspace "vmware-mcp"),       # B：同级 vmware-mcp 目录
+    (Join-Path $LabRoot "vmware-mcp")
+)) {
+    if (Test-Path (Join-Path $candidate "config.json")) { $McpDir = $candidate; break }
+}
+if (-not $McpDir) {
+    throw "找不到 config.json：请在 examples\config.json 或同级 vmware-mcp\config.json 里放一份（模板见 config.example.json）"
+}
+
 $CfgPath = Join-Path $McpDir "config.json"
 $GuestSh = Join-Path $McpDir "guest-sh.ps1"
-$KeyPath = "$env:USERPROFILE\.ssh\vmware_centos"
+$KeyPath = ""   # 留空则用 config.json 的 sshKeyPath，见下方
 $PidFile = Join-Path $LabRoot ".tunnel.pid"
 $ShotDir = Join-Path $Workspace "shots"
 
@@ -50,8 +61,21 @@ if (-not (Test-Path $Edge)) {
 
 if (-not (Test-Path $CfgPath)) { throw "找不到配置: $CfgPath" }
 $Cfg = Get-Content $CfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$VmAlias = if ($Cfg.defaultVm) { $Cfg.defaultVm } else { "centos" }
+
+# 所有路径都来自 config.json，脚本里不再写死密钥名或虚拟机名。
+$KeyPath = if ($Cfg.sshKeyPath) { $Cfg.sshKeyPath } else { "$env:USERPROFILE\.ssh\id_ed25519" }
+$VmAlias = if ($Cfg.defaultVm) { $Cfg.defaultVm } else { @($Cfg.vms.PSObject.Properties.Name)[0] }
+if (-not $VmAlias) { throw "config.json 的 vms 里没有任何虚拟机，请先填一个别名" }
 $Vmrun = $Cfg.vmrunPath
+if (-not $Vmrun) {
+    # 留空时按安装目录探测（Workstation 可能装在非默认路径）
+    $candidates = @(
+        "C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe",
+        "C:\Program Files\VMware\VMware Workstation\vmrun.exe"
+    )
+    $Vmrun = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+if (-not $Vmrun -or -not (Test-Path $Vmrun)) { throw "找不到 vmrun.exe；请在 config.json 里填 vmrunPath 的绝对路径" }
 $Vmx = $Cfg.vms.$VmAlias
 
 # MySQL 密码来源（按优先级）：

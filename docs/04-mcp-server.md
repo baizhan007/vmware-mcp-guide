@@ -4,33 +4,57 @@
 
 ---
 
+> 本章的代码和仓库里的 [`examples/server.js`](../examples/server.js) **逐行对应**。
+> 你可以先跑起来，再回头读代码，不用先"抄一遍"。
+
 ## 4.1 目录结构
 
 ```
-vmware-mcp/
-├── server.js          # MCP 服务器主文件
-├── config.json        # 虚拟机配置
-├── guest-sh.ps1       # SSH 执行封装（可选但强烈建议）
-├── vnc.mjs            # VNC 截图/输入（可选）
-└── test-client.js     # 命令行测试工具
+vmware-mcp-guide/
+├── examples/
+│   ├── server.js            # MCP 服务器（1500 行，零依赖）
+│   ├── config.json          # 你的配置（由 config.example.json 复制，不进 git）
+│   ├── config.example.json  # 配置模板
+│   ├── test-client.js       # 命令行测试客户端
+│   ├── guest-sh.ps1         # SSH 执行封装
+│   └── lab.ps1              # 日常操作总入口
+└── scripts/
+    ├── doctor.mjs           # 环境自检：一条命令告诉你哪一步没通
+    ├── smoke.mjs            # 真实握手测试（CI 跑的就是它）
+    └── check-links.mjs      # 文档断链检查
 ```
 
-## 4.2 初始化项目
+## 4.2 不需要 `npm install`
+
+`server.js` 只用了 Node 内置模块（`child_process` / `fs` / `os` / `path` / `net`），
+MCP 的 JSON-RPC 协议是**手写**的，没有引入任何第三方包。
 
 ```powershell
-mkdir vmware-mcp
-cd vmware-mcp
-npm init -y
-npm install @modelcontextprotocol/sdk
+node examples/server.js      # 直接就能跑（终端里会打印帮助，不是卡住）
 ```
 
-## 4.3 config.json
+> **为什么手写协议而不是用 SDK？**
+>
+> 1. 教学目的：你能看到 `initialize` / `tools/list` / `tools/call` 的原始报文，而不是被 SDK 包住；
+> 2. 零依赖 = 没有 `node_modules`、没有版本冲突、clone 下来就能跑；
+> 3. 这个服务器的工具面很小（25 个），手写的成本远低于理解 SDK 的抽象。
+>
+> 想用官方 SDK 的话，注册工具的写法是 `server.registerTool(name, { description, inputSchema }, handler)`
+> （`McpServer` 类，`@modelcontextprotocol/sdk` 1.x 起）。两条路都行，本仓库选前者。
 
-**把所有环境差异集中到这一个文件**，server.js 不用改。这是复用的关键。
+## 4.3 config.json：把所有环境差异关进一个文件
+
+`server.js` 里没有一处写死你的路径。它按这个顺序找配置：
+
+| 顺序 | 位置 | 用途 |
+|:---:|:---|:---|
+| 1 | `%VMWARE_MCP_CONFIG%` | 环境变量，指定任意路径（CI / 多套环境） |
+| 2 | `examples/config.json` | 默认位置，和 `server.js` 同目录 |
+| 3 | `%USERPROFILE%\.vmware-mcp\config.json` | 想把配置放在仓库外时用 |
 
 ```json
 {
-  "vmrunPath": "C:\\Program Files (x86)\\VMware\\VMware Workstation\\vmrun.exe",
+  "vmrunPath": "",
   "hostType": "ws",
   "defaultVm": "centos",
   "vms": {
@@ -41,6 +65,7 @@ npm install @modelcontextprotocol/sdk
   "guestUser": "root",
   "guestPassword": "your-password",
   "vmPassword": "",
+  "sshKeyPath": "C:\\Users\\you\\.ssh\\id_ed25519",
   "vmrunTimeoutMs": 120000,
   "startTimeoutMs": 600000,
   "encoding": "gbk"
@@ -51,74 +76,93 @@ npm install @modelcontextprotocol/sdk
 
 | 字段 | 说明 | 常见错误 |
 |:---|:---|:---|
-| `vmrunPath` | vmrun.exe 绝对路径 | 默认装在 `Program Files (x86)` |
+| `vmrunPath` | vmrun.exe 绝对路径，**留空自动探测** | 装在非默认盘时探测不到，填绝对路径 |
 | `hostType` | Workstation 固定 `ws` | 写成 `player` 会失败 |
 | `defaultVm` | 不指定 vm 时用哪个 | 别名要和 `vms` 的 key 一致 |
-| `vms` | 别名 → .vmx 路径 | 路径含中文要转义或加引号 |
-| `scanRoots` | 自动扫描 .vmx 的目录 | 不填则只认 `vms` 里配的 |
+| `vms` | 别名 → .vmx 路径 | 路径含中文没问题，反斜杠要写 `\\` |
+| `scanRoots` | 自动扫描 .vmx 的目录（最多 3 层） | 不填则只认 `vms` 里配的 |
 | `guestUser`/`guestPassword` | 客户机凭据 | 只影响 Tools 通道，不影响 SSH |
-| `encoding` | **必须是 `gbk`** | 写 utf8 会乱码 |
+| `sshKeyPath` | `guest-sh.ps1` / `lab.ps1` 用的私钥 | 不填则用 `~/.ssh/id_ed25519` |
+| `encoding` | `.vmx` 的编码，中文 Windows 上是 `gbk` | 写 `utf8` 会读出乱码中文名 |
 
-> **`encoding` 为什么是 gbk**：VMware 的 `.vmx` 文件是 GBK 编码，而 `vmrun` 输出是 UTF-8。
-> 两者混用会导致中文路径乱码，报「找不到虚拟机」。
+> **`vmrunPath` 的自动探测顺序**：`%VMWARE_VMRUN%` → 安装注册表
+> `HKLM\SOFTWARE\WOW6432Node\VMware, Inc.\VMware Workstation\InstallPath`
+> → `Program Files` 两个常见目录 → `PATH`。
+> 这样即使 Workstation 装在 `D:\VMware 17.0\`，也能自己找到。
 
-## 4.4 server.js 骨架
+## 4.4 server.js 的三段骨架
 
-MCP 服务器本质就是一个**函数注册表**。每个工具 = 一个 JSON Schema + 一段执行逻辑。
+整个服务器就三段：**配置 → 工具表 → 协议循环**。
+
+### ① 统一的 vmrun 包装（所有工具的唯一出口）
 
 ```javascript
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+const { spawn, spawnSync } = require("node:child_process");
 
-const CFG = JSON.parse(readFileSync(new URL("./config.json", import.meta.url), "utf8"));
-
-const server = new Server(
-  { name: "vmware", version: "1.0.0" },
-  { capabilities: { tools: {} } }
-);
-
-// ---------- 核心：统一的 vmrun 包装 ----------
-async function vmrun(args, timeoutMs = CFG.vmrunTimeoutMs) {
-  return new Promise((resolve, reject) => {
-    execFile(
-      CFG.vmrunPath,
-      ["-T", CFG.hostType, ...args],
-      { timeout: timeoutMs, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        if (err) reject(new Error((stderr || err.message).trim()));
-        else resolve(stdout.trim());
-      }
-    );
+function vmrun(args, timeoutMs) {
+  return new Promise((resolve) => {
+    const child = spawn(CONFIG.vmrunPath, ["-T", CONFIG.hostType, ...args], {
+      env: vmrunEnv(),            // 见下方「环境变量」一节
+      windowsHide: true,
+    });
+    // ...收集 stdout/stderr，超时就 kill...
   });
 }
-
-// ---------- 虚拟机解析 ----------
-function resolveVm(value) {
-  const name = value || CFG.defaultVm;
-  if (!name) throw new Error("no VM given and no defaultVm configured");
-  if (CFG.vms?.[name]) return CFG.vms[name];
-  if (/\.vmx$/i.test(name)) return name;
-  throw new Error(`unknown VM "${name}"; check config.json`);
-}
-
-// ---------- 注册工具 ----------
-server.tool("start_vm", "Power on a VM", {
-  vm: { type: "string", description: "VM alias or .vmx path" },
-  gui: { type: "boolean", description: "Show VMware window" }
-}, async ({ vm, gui }) => {
-  const vmx = resolveVm(vm);
-  await vmrun(["start", vmx, gui === false ? "nogui" : "gui"]);
-  return { content: [{ type: "text", text: `started ${vm || CFG.defaultVm}` }] };
-});
-
-// ---------- 启动 ----------
-await server.connect(new StdioServerTransport());
 ```
 
-> **注意**：`vmrun` 包装函数是整个服务器的心脏。所有工具都走它，
-> 统一处理超时、编码、错误，避免每个工具重复写 try/catch。
+所有工具都走它，超时、编码、退出码、错误文案只处理一次。
+
+> **为什么要补环境变量**：agent 沙箱常把子进程环境清空，`vmrun` 会因为缺
+> `SystemDrive` 直接崩在 `VERIFY bora\lib\ssl\ssl.c`。`vmrunEnv()` 把
+> `SystemDrive` / `SystemRoot` / `ComSpec` / `PATH` 等补回去，这个问题就不再出现。
+
+### ② 工具表：一个数组 + 一个注册函数
+
+```javascript
+const tools = [];
+
+function tool(name, description, inputSchema, handler) {
+  tools.push({ name, description, inputSchema, handler });
+}
+
+tool("start_vm", "Power on a VM (GUI window unless gui is false). Waits for the VM to start.", {
+  type: "object",
+  properties: {
+    vm:  { type: "string", description: "VM alias, display name, or absolute .vmx path." },
+    gui: { type: "boolean", description: "Show the VMware window (default true)." },
+  },
+}, async (args) => {
+  const vmx = resolveVm(args.vm);
+  await vmrun(["start", vmx, args.gui === false ? "nogui" : "gui"]);
+  return text(`started ${args.vm || CONFIG.defaultVm}`);
+});
+```
+
+**这就是全部魔法**：注册一个工具 = 往数组里放一条记录。
+`tools/list` 直接把它序列化给客户端，`tools/call` 按名字找 handler。
+
+### ③ 协议循环：三行一个 JSON
+
+```javascript
+case "tools/list":
+  reply(id, { tools: tools.map((t) => ({
+    name: t.name, description: t.description, inputSchema: t.inputSchema,
+  })) });
+  return;
+
+case "tools/call": {
+  const entry = tools.find((t) => t.name === params.name);
+  if (!entry) return replyError(id, -32602, `unknown tool: ${params.name}`);
+  const result = await entry.handler(params.arguments || {});
+  return reply(id, result);
+}
+```
+
+`initialize` 时返回 `capabilities.tools` 和一段 `instructions`（给模型看的操作说明，
+由 `config.json` 动态生成，不会写死某台机器的别名）。
+
+> **传输层是 stdio**：一行一个 JSON-RPC 报文，`stdout` 只走协议，日志一律走 `stderr`。
+> 这就是为什么你能用 `node examples/test-client.js` 直接测它。
 
 ## 4.5 25 个工具清单
 
@@ -199,28 +243,36 @@ AI 看到「用 start_vm」就知道该怎么做了。
 
 ### ③ 保留逃生口
 
-`vmrun_raw` 允许直接跑任意 vmrun 命令，避免「有个功能没封装」就卡死。
+`vmrun_raw` 允许直接跑任意白名单 vmrun 命令，避免「有个功能没封装」就卡死。
 
 ```javascript
-server.tool("vmrun_raw", "Run any allow-listed vmrun command", {
-  command: { type: "string" },
-  vm: { type: "string" },
-  args: { type: "array", items: { type: "string" } }
-}, async ({ command, vm, args }) => {
-  const full = vm ? [command, resolveVm(vm), ...(args || [])] : [command, ...(args || [])];
-  return { content: [{ type: "text", text: await vmrun(full) }] };
-});
+tool("vmrun_raw", "Escape hatch: run any allow-listed vmrun command directly.", {
+  type: "object",
+  properties: {
+    command: { type: "string", description: "vmrun subcommand, e.g. listSnapshots." },
+    vm:      { type: "string", description: "Optional VM alias." },
+    args:    { type: "array", items: { type: "string" } },
+  },
+  required: ["command"],
+}, async (args) => text(await vmrun([args.command, ...(args.args || [])])));
 ```
 
-## 4.7 本地测试
+## 4.7 本地测试（三条命令）
 
-不用等客户端，直接用脚本测：
+不用等客户端，按顺序跑：
 
 ```powershell
-node test-client.js server.js '[{"name":"list_vms","arguments":{}}]'
+# ① 环境自检：Node / vmrun / 配置 / 虚拟机 / SSH 密钥
+node scripts/doctor.mjs
+
+# ② 真实握手：启动 server → initialize → tools/list → 校验 25 个工具的 schema
+node scripts/smoke.mjs
+
+# ③ 调用具体工具
+node examples/test-client.js examples/server.js '[{"name":"list_vms","arguments":{}}]'
 ```
 
-输出：
+输出示例：
 
 ```
 running VMs: 1
@@ -231,7 +283,8 @@ aliases:
 centos -> D:\VMs\CentOS 7 64 位.vmx
 ```
 
-完整实现见 [`examples/server.js`](../examples/server.js)。
+`smoke.mjs` 就是 CI 跑的那一个——它真的把 server 拉起来通信，
+而不是只做 `node --check` 语法解析（那种检查曾让一个"启动即崩"的版本通过了 CI）。
 
 ---
 

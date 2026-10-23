@@ -11,7 +11,7 @@
  */
 "use strict";
 
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
@@ -58,9 +58,13 @@ function log(message) {
 
 // ----------------------------------------------------------------- config ---
 
+const DEFAULT_VMRUN = "C:\\Program Files (x86)\\VMware\\VMware Workstation\\vmrun.exe";
+
 const DEFAULTS = {
-  // Change this to your vmrun.exe path, or override it in config.json.
-  vmrunPath: "C:\\Program Files (x86)\\VMware\\VMware Workstation\\vmrun.exe",
+  // Left empty on purpose: findVmrun() probes the usual install paths and PATH,
+  // so a fresh clone works without editing anything when Workstation is installed
+  // in its default location.
+  vmrunPath: "",
   hostType: "ws",
   defaultVm: "",
   vms: {},
@@ -68,22 +72,102 @@ const DEFAULTS = {
   guestUser: "",
   guestPassword: "",
   vmPassword: "",
+  // Used by guest-sh.ps1 / lab.ps1; kept here so every path lives in one file.
+  sshKeyPath: "",
   vmrunTimeoutMs: 120000,
   startTimeoutMs: 600000,
   screenDir: "",
-  // Host ANSI code page used by .vmx files and vmrun output.
-  encoding: process.platform === "win32" ? "gbk" : "utf-8",
+  // Host ANSI code page used by .vmx files.
+  encoding: "gbk",
 };
 
+/** Where config.json may live, in priority order. */
+function configCandidates() {
+  const list = [];
+  if (process.env.VMWARE_MCP_CONFIG) list.push(path.resolve(process.env.VMWARE_MCP_CONFIG));
+  list.push(path.join(__dirname, "config.json"));
+  list.push(path.join(os.homedir(), ".vmware-mcp", "config.json"));
+  return list;
+}
+
+/** First config file that exists, or "" when the user has not created one yet. */
+function findConfigFile() {
+  for (const candidate of configCandidates()) {
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      /* keep looking */
+    }
+  }
+  return "";
+}
+
+/** Ask the installer's registry entry, which also covers non-default install dirs. */
+function findVmrunInRegistry() {
+  if (process.platform !== "win32") return "";
+  const keys = [
+    "HKLM\\SOFTWARE\\VMware, Inc.\\VMware Workstation",
+    "HKLM\\SOFTWARE\\WOW6432Node\\VMware, Inc.\\VMware Workstation",
+  ];
+  for (const key of keys) {
+    try {
+      const result = spawnSync("reg.exe", ["query", key, "/v", "InstallPath"], {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 5000,
+      });
+      if (result.status !== 0 || !result.stdout) continue;
+      const match = /InstallPath\s+REG_SZ\s+(.+)/i.exec(result.stdout);
+      if (!match) continue;
+      const candidate = path.join(match[1].trim(), "vmrun.exe");
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      /* registry unavailable; fall back to the path probes */
+    }
+  }
+  return "";
+}
+
+/** Locate vmrun.exe: explicit env var, the installer registry, usual dirs, then PATH. */
+function findVmrun() {
+  const seen = new Set();
+  const found = [];
+  const add = (candidate) => {
+    if (!candidate) return;
+    const key = candidate.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    try {
+      if (fs.statSync(candidate).isFile()) found.push(candidate);
+    } catch {
+      /* not here */
+    }
+  };
+
+  add(process.env.VMWARE_VMRUN);
+  add(findVmrunInRegistry());
+  for (const base of [
+    process.env.ProgramFiles,
+    process.env["ProgramFiles(x86)"],
+    "C:\\Program Files",
+    "C:\\Program Files (x86)",
+  ]) {
+    if (base) add(path.join(base, "VMware", "VMware Workstation", "vmrun.exe"));
+  }
+  for (const dir of (process.env.PATH || "").split(path.delimiter)) {
+    if (dir) add(path.join(dir, "vmrun.exe"));
+  }
+  return found[0] || "";
+}
+
 function loadConfig() {
-  const dir = __dirname;
   let file = {};
-  const configPath = path.join(dir, "config.json");
-  if (fs.existsSync(configPath)) {
+  const configPath = findConfigFile();
+  if (configPath) {
     try {
       file = JSON.parse(fs.readFileSync(configPath, "utf8"));
     } catch (error) {
-      log(`config.json is not valid JSON: ${error.message}`);
+      log(`config.json is not valid JSON (${configPath}): ${error.message}`);
     }
   }
   const cfg = { ...DEFAULTS, ...file };
@@ -95,28 +179,41 @@ function loadConfig() {
   cfg.vms = cfg.vms && typeof cfg.vms === "object" ? cfg.vms : {};
   cfg.scanRoots = Array.isArray(cfg.scanRoots) ? cfg.scanRoots : [];
   cfg.screenDir = cfg.screenDir || path.join(os.tmpdir(), "vmware-mcp-screens");
+  cfg.sshKeyPath = cfg.sshKeyPath || path.join(os.homedir(), ".ssh", "id_ed25519");
+
+  if (!cfg.vmrunPath || !fs.existsSync(cfg.vmrunPath)) {
+    const detected = findVmrun();
+    if (detected) {
+      if (cfg.vmrunPath) log(`configured vmrunPath not found, using detected ${detected}`);
+      cfg.vmrunPath = detected;
+    } else if (!cfg.vmrunPath) {
+      cfg.vmrunPath = DEFAULT_VMRUN;
+    }
+  }
   return cfg;
 }
 
 // config.json is re-read when its mtime changes, so editing aliases or guest
 // credentials does not require restarting the MCP server.
 let cachedConfig = null;
+let cachedConfigPath = "";
 let cachedMtimeMs = 0;
 
 function currentConfig() {
-  const configPath = path.join(__dirname, "config.json");
-  try {
-    const stat = fs.statSync(configPath);
-    if (!cachedConfig || stat.mtimeMs !== cachedMtimeMs) {
-      cachedConfig = loadConfig();
-      cachedMtimeMs = stat.mtimeMs;
-      if (cachedConfig) log("config.json (re)loaded");
+  const configPath = findConfigFile();
+  let mtimeMs = 0;
+  if (configPath) {
+    try {
+      mtimeMs = fs.statSync(configPath).mtimeMs;
+    } catch {
+      /* raced with an editor save; reload below */
     }
-  } catch {
-    if (!cachedConfig) {
-      cachedConfig = loadConfig();
-      cachedMtimeMs = 0;
-    }
+  }
+  if (!cachedConfig || configPath !== cachedConfigPath || mtimeMs !== cachedMtimeMs) {
+    cachedConfig = loadConfig();
+    cachedConfigPath = configPath;
+    cachedMtimeMs = mtimeMs;
+    log(configPath ? `config loaded: ${configPath}` : "no config.json found; using defaults + auto-detection");
   }
   return cachedConfig;
 }
@@ -1311,6 +1408,26 @@ function replyError(id, code, message) {
   send({ jsonrpc: "2.0", id, error: { code, message } });
 }
 
+/**
+ * Guidance handed to the client on initialize. Built from config.json so it
+ * never mentions aliases or helper files that only exist on one machine.
+ */
+function serverInstructions() {
+  const cfg = currentConfig();
+  const aliases = Object.keys(cfg.vms || {});
+  return [
+    "Controls VMware Workstation on this Windows host through vmrun.exe (no extra service, no REST API).",
+    aliases.length
+      ? `Configured VM aliases: ${aliases.join(", ")}.`
+      : "No VM aliases configured yet: copy examples/config.example.json to config.json and list your .vmx files.",
+    "Call list_vms first to see configured and discovered VMs.",
+    "Before running anything inside a guest, call probe_channels: it reports which transports actually work (VMware Tools, SSH, VNC, serial) and the recommended next step.",
+    "Prefer run_command_in_guest for short privileged commands and SSH (guest-sh.ps1) for scripts and long jobs, because vmrun only returns the last command's output and MCP calls time out.",
+    "capture_screen and the copy_file_* tools need VMware Tools plus guest credentials in config.json.",
+    "Known limitation: typing at the guest console (login prompt, BIOS, boot menu) is only possible over VNC; host keyboard injection and vmrun typeKeystrokesInGuest are verified broken on Workstation 17.6.4.",
+  ].join(" ");
+}
+
 async function handleRequest(message) {
   const { id, method, params } = message;
   const isNotification = id === undefined || id === null;
@@ -1324,19 +1441,7 @@ async function handleRequest(message) {
           protocolVersion,
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-          instructions:
-            "Controls VMware Workstation on this host through vmrun. Call list_vms first to see configured aliases; " +
-            "the default alias is 'centos'. Guest credentials come from config.json (currently user 'root'). " +
-            "When a task needs anything to run INSIDE a guest, call probe_channels first: it reports which transports " +
-            "actually work (VMware Tools, SSH, VNC, serial) and which are known-broken, plus the recommended next step. " +
-            "Prefer vmware_tools for commands/files/screenshots and ssh for scripts. " +
-            "For CONSOLE input (typing at a login prompt, BIOS, boot menus) use the VNC channel: " +
-            "'node vnc.mjs type 127.0.0.1:5901 \"text\"' (see vnc.mjs header for shot/login/clear/keys). " +
-            "Do NOT synthesize host keyboard input (SendKeys/keybd_event/SendInput/PostMessage) - verified never to " +
-            "reach this console. Do NOT use vmrun typeKeystrokesInGuest - verified broken on Workstation 17.6.4 even " +
-            "when elevated; its 'insufficient permissions' message is misleading. " +
-            "Local helper scripts (guest-sh.ps1, vnc.mjs, ocr.ps1) and README.md / RETROSPECTIVE.md / RESEARCH.md " +
-            "live in this server's working directory - read README.md section 6 for known issues and workarounds.",
+          instructions: serverInstructions(),
         });
         return;
       }
@@ -1412,6 +1517,33 @@ function handleMessage(raw) {
 }
 
 let buffer = "";
+
+// A human typing `node server.js` in a terminal would otherwise stare at a
+// silent, hung process: the server speaks newline-delimited JSON-RPC on stdin.
+if (process.stdin.isTTY && !process.env.VMWARE_MCP_ALLOW_TTY) {
+  const cfg = currentConfig();
+  process.stdout.write(
+    [
+      `${SERVER_NAME} ${SERVER_VERSION} — MCP server for VMware Workstation (Windows)`,
+      "",
+      "This is a stdio MCP server, meant to be launched by an MCP client, not by hand.",
+      "",
+      `  vmrun   : ${cfg.vmrunPath}`,
+      `  config  : ${findConfigFile() || "(none; using defaults)"}`,
+      `  tools   : ${tools.length}`,
+      "",
+      "Try it:",
+      "  node scripts/doctor.mjs                       # check host, config and VMs",
+      "  node examples/test-client.js examples/server.js '[]'   # handshake + tools/list",
+      "",
+      "Register it in your client (see docs/05-register.md), e.g. Claude Desktop:",
+      '  "command": "node", "args": ["<repo>\\\\examples\\\\server.js"]',
+      "",
+    ].join("\n"),
+  );
+  process.exit(0);
+}
+
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   buffer += chunk;
@@ -1431,4 +1563,7 @@ process.stdin.on("end", () => {
 process.on("uncaughtException", (error) => log(`uncaught: ${error.stack || error.message}`));
 process.on("unhandledRejection", (error) => log(`unhandled rejection: ${error && error.message}`));
 
+if (process.platform !== "win32") {
+  log(`warning: this server targets VMware Workstation on Windows (running on ${process.platform})`);
+}
 log(`ready (${tools.length} tools, vmrun: ${CONFIG.vmrunPath})`);

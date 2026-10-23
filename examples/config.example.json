@@ -1,16 +1,22 @@
 {
-  "_comment": "复制本文件为 config.json，然后把下面几项改成你自己的值。",
-  "vmrunPath": "C:\\Program Files (x86)\\VMware\\VMware Workstation\\vmrun.exe",
+  "_comment": "复制本文件为 config.json（与 server.js 同目录），把下面几项改成你自己的值。留空的项会自动探测。",
+  "_vmrunPath": "留空 = 自动探测（安装注册表 → Program Files → PATH）。装到非默认盘时也可以直接填绝对路径。",
+  "vmrunPath": "",
   "hostType": "ws",
+  "_defaultVm": "不指定 vm 参数时用哪个别名，必须出现在下面的 vms 里。",
   "defaultVm": "centos",
+  "_vms": "别名 -> .vmx 绝对路径。路径含中文没问题，但反斜杠要写成 \\\\。",
   "vms": {
     "centos": "D:\\VMs\\CentOS 7 64 位.vmx"
   },
+  "_scanRoots": "list_vms 会自动扫描这些目录下的 .vmx（最多 3 层）。",
   "scanRoots": ["D:\\VMs"],
+  "_guest": "只影响 VMware Tools 通道（run_command_in_guest / copy_file_* / capture_screen），不影响 SSH。",
   "guestUser": "root",
   "guestPassword": "CHANGE_ME",
   "vmPassword": "",
-  "mysqlPassword": "CHANGE_ME",
+  "_sshKeyPath": "guest-sh.ps1 / lab.ps1 用的私钥；配好免密后填这里。",
+  "sshKeyPath": "C:\\Users\\YOUR_NAME\\.ssh\\id_ed25519",
   "vmrunTimeoutMs": 120000,
   "startTimeoutMs": 600000,
   "encoding": "gbk"

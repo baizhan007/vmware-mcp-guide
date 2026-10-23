@@ -85,6 +85,15 @@ cmd.exe /c 'ssh-keygen.exe -t ed25519 -f "%USERPROFILE%\.ssh\vmware_centos" -N "
 > PowerShell 里写 `-N '""'` 会被设成**字面量密码**（两个引号字符），
 > 导致每次 SSH 都提示输入密码，而且你输什么都不对。
 
+密钥文件名随你取（这里是 `vmware_centos`）。生成后**把路径填进 `config.json` 的 `sshKeyPath`**，
+`guest-sh.ps1` 和 `lab.ps1` 都会读它，脚本里就不用改任何硬编码路径：
+
+```json
+{ "sshKeyPath": "C:\\Users\\you\\.ssh\\vmware_centos" }
+```
+
+不填则默认用 `%USERPROFILE%\.ssh\id_ed25519`。
+
 ### 第二步：把公钥放进虚拟机
 
 **方式 A（推荐）** — 在 VMware 窗口里登录 root，粘贴公钥内容：
@@ -166,77 +175,47 @@ RECOMMENDED: vmware_tools
 ## 3.5 封装 SSH 执行（guest-sh.ps1）
 
 MCP 的 `run_command_in_guest` 有两个硬伤：多命令只回最后一条、单次调用 120 秒超时。
-所以需要一个 SSH 封装：
+所以需要一个 SSH 封装。完整实现只有 90 行，见 [`examples/guest-sh.ps1`](../examples/guest-sh.ps1)，
+这里只看三个关键点。
+
+### ① 别名 → 当前 IP
+
+虚拟机的 IP 会变（DHCP），别名不会。所以每次执行前用 `vmrun getGuestIPAddress` 现查：
 
 ```powershell
-param(
-    [Parameter(Position = 0)][string]$Command = "true",
-    [string]$Vm = "",
-    [string]$User = "root",
-    [string]$KeyPath = "$env:USERPROFILE\.ssh\vmware_centos",
-    [string]$Script = "",
-    [int]$TimeoutSec = 60
-)
-
-# 把别名解析成 IP
-function Resolve-GuestAddress([string]$Name) {
-    $cfgPath = Join-Path $PSScriptRoot "config.json"
-    if (-not (Test-Path $cfgPath)) { return $Name }
-    $cfg = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $alias = if ($Name) { $Name } else { $cfg.defaultVm }
-    if ($alias -match '^\d{1,3}(\.\d{1,3}){3}$') { return $alias }
-    $vmx = $cfg.vms.$alias
-    $ip = & $cfg.vmrunPath -T ws getGuestIPAddress $vmx 2>&1
-    return ($ip | Select-Object -Last 1).ToString().Trim()
-}
-
-$Vm = Resolve-GuestAddress $Vm
-
-$common = @(
-    "-i", $KeyPath,
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=NUL",
-    "-o", "BatchMode=yes",
-    "-o", "ConnectTimeout=8",
-    "-o", "LogLevel=ERROR"
-)
-
-if ($Script) {
-    # 关键：CRLF 转 LF
-    $body = (Get-Content $Script -Raw) -replace "`r`n", "`n" -replace "`r", "`n"
-    if (-not $body.EndsWith("`n")) { $body += "`n" }
-    $tmp = [IO.Path]::Combine($env:TEMP, "guest-sh-" + [guid]::NewGuid().ToString("N") + ".sh")
-    [IO.File]::WriteAllText($tmp, $body, (New-Object Text.UTF8Encoding($false)))
-    try {
-        $argLine = ($common + @("$User@$Vm", "sh -s")) -join " "
-        cmd.exe /c "`"$ssh`" $argLine < `"$tmp`"" 2>&1
-    } finally {
-        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-    }
-} else {
-    & $ssh @common "$User@$Vm" $Command 2>&1
-}
+$vmx = $Cfg.vms.$alias
+$ip  = & $vmrun -T ws getGuestIPAddress $vmx 2>&1
 ```
 
-### 两个关键细节
-
-**① 必须把 CRLF 转成 LF**
+### ② 路径全部来自 config.json
 
 ```powershell
-$body = (Get-Content $Script -Raw) -replace "`r`n", "`n"
+$User    = if ($User)    { $User }    elseif ($Cfg.guestUser)  { $Cfg.guestUser }  else { "root" }
+$KeyPath = if ($KeyPath) { $KeyPath } elseif ($Cfg.sshKeyPath) { $Cfg.sshKeyPath } else { "$env:USERPROFILE\.ssh\id_ed25519" }
 ```
 
-否则 `tail -1` 会变成 `tail -1\r`，报 `invalid option -- '1'`。
+换机器、换密钥名，只改 `config.json`，脚本不动。
 
-**② 用 cmd 的 stdin 重定向，不要用 PowerShell 管道**
+### ③ CRLF 归一化 + cmd 的 stdin 重定向
 
 ```powershell
+$body = (Get-Content $Script -Raw) -replace "`r`n", "`n" -replace "`r", "`n"
+...
 cmd.exe /c "`"$ssh`" $argLine < `"$tmp`""
 ```
 
-PowerShell 5.1 无法把原始字节喂给原生命令，管道会破坏内容。
+**为什么必须这样做**
 
-完整实现见 [`examples/guest-sh.ps1`](../examples/guest-sh.ps1)。
+- 不转 LF：`tail -1` 会变成 `tail -1\r`，客户机报 `invalid option -- '1'`。
+- 不用 cmd 重定向：PowerShell 5.1 无法把原始字节喂给原生命令，管道会破坏脚本内容。
+
+调用示例：
+
+```powershell
+.\guest-sh.ps1 "uname -r"                 # 默认虚拟机
+.\guest-sh.ps1 "uname -r" -Vm centos      # 指定别名
+.\guest-sh.ps1 -Script .\local.sh         # 整个脚本送进去跑
+```
 
 ## 3.6 本章检查清单
 
